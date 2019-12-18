@@ -5,6 +5,22 @@ import datetime
 import imutils
 import time
 import cv2
+from event import NewImageEvent
+from azure.eventhub import EventHubProducerClient, EventData
+from azure.identity import DefaultAzureCredential
+
+credential = DefaultAzureCredential()
+eventhub_client = EventHubProducerClient("pythonimagecapture.servicebus.windows.net", "imagecapture", credential)
+
+def handleNewImage(image_name, frame):
+	cv2.imwrite(image_name, frame)
+	#Can write code in here to send to event hub
+	with eventhub_client:
+		batch = eventhub_client.create_batch()
+		data = EventData(frame)
+		batch.add(data)
+		eventhub_client.send_batch(batch)
+		print("Sent an event")
  
 # construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser()
@@ -23,6 +39,8 @@ else:
  
 # initialize the first frame in the video stream
 firstFrame = None
+newImageEvent = NewImageEvent()
+newImageEvent.newImage += handleNewImage
 
 # loop over the frames of the video
 while True:
@@ -58,6 +76,7 @@ while True:
 	cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL,
 		cv2.CHAIN_APPROX_SIMPLE)
 	cnts = imutils.grab_contours(cnts)
+
  
 	# loop over the contours
 	for c in cnts:
@@ -70,7 +89,9 @@ while True:
 		(x, y, w, h) = cv2.boundingRect(c)
 		cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 		text = "Occupied"
-		cv2.imwrite("image.png", frame)
+		# Send the image to Blob Storage via event queue
+		newImageEvent.newImage("image.png", frame)
+		
 
         # draw the text and timestamp on the frame
 	cv2.putText(frame, "Room Status: {}".format(text), (10, 20),
