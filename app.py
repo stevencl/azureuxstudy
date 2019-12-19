@@ -14,12 +14,17 @@ eventhub_client = EventHubProducerClient("pythonimagecapture.servicebus.windows.
 
 def handleNewImage(image_name, frame):
 	cv2.imwrite(image_name, frame)
+	with open(image_name, 'rb') as image_file:
+		content = image_file.read()
 	#Can write code in here to send to event hub
 	with eventhub_client:
-		batch = eventhub_client.create_batch()
-		data = EventData(frame)
+		batch = eventhub_client.create_batch(partition_key=b"test_partition_a")
+		data = EventData(content)
 		batch.add(data)
+#		try:
 		eventhub_client.send_batch(batch)
+#		except KeyError:
+#			print("Something went wrong")
 		print("Sent an event")
  
 # construct the argument parser and parse the arguments
