@@ -17,15 +17,17 @@ def handleNewImage(image_name, frame):
 	with open(image_name, 'rb') as image_file:
 		content = image_file.read()
 	#Can write code in here to send to event hub
-	with eventhub_client:
-		batch = eventhub_client.create_batch(partition_key=b"test_partition_a")
-		data = EventData(content)
+	
+	batch = eventhub_client.create_batch(max_size_in_bytes=10000)
+	#data = EventData(content)
+	data = EventData(b"Hello There")
+	try:
 		batch.add(data)
-#		try:
-		eventhub_client.send_batch(batch)
-#		except KeyError:
-#			print("Something went wrong")
-		print("Sent an event")
+	except ValueError:
+		print("Can't add data to batch")
+
+	eventhub_client.send_batch(batch)
+	print("Sent an event")
  
 # construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser()
@@ -116,4 +118,5 @@ while True:
  
 # cleanup the camera and close any open windows
 vs.stop() if args.get("video", None) is None else vs.release()
+eventhub_client.close()
 cv2.destroyAllWindows()
