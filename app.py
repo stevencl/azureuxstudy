@@ -8,19 +8,66 @@ import cv2
 from event import NewImageEvent
 from azure.eventhub import EventHubProducerClient, EventData
 from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient
+import asyncio
+import io
+import glob
+import os
+import sys
+import time
+import uuid
+import requests
+from urllib.parse import urlparse
+from io import BytesIO
+#from PIL import Image, ImageDraw
+from azure.cognitiveservices.vision.face import FaceClient
+from msrest.authentication import CognitiveServicesCredentials
+from azure.cognitiveservices.vision.face.models import TrainingStatusType, Person, SnapshotObjectType, OperationStatusType, FaceAttributeType
 
 credential = DefaultAzureCredential()
+storage_client = BlobServiceClient("https://storageandidentity.blob.core.windows.net", credential)
 eventhub_client = EventHubProducerClient("pythonimagecapture.servicebus.windows.net", "imagecapture", credential)
 
-def handleNewImage(image_name, frame):
-	cv2.imwrite(image_name, frame)
+# Set the FACE_SUBSCRIPTION_KEY environment variable with your key as the value.
+# This key will serve all examples in this document.
+KEY = os.environ['FACE_SUBSCRIPTION_KEY']
+
+# Set the FACE_ENDPOINT environment variable with the endpoint from your Face service in Azure.
+# This endpoint will be used in all examples in this quickstart.
+ENDPOINT = os.environ['FACE_ENDPOINT']
+face_client = FaceClient(ENDPOINT, CognitiveServicesCredentials(KEY))
+faces_detected = 0
+
+
+def analyseImage(image_name, frame):
+	# Detect a face in an image that contains a single face
+	emotions = ""
 	with open(image_name, 'rb') as image_file:
-		content = image_file.read()
-	#Can write code in here to send to event hub
-	
+		detected_faces = face_client.face.detect_with_stream(image_file, return_face_attributes=FaceAttributeType.emotion)
+		if detected_faces:
+			faces_detected = faces_detected  + 1
+			# Display the detected face ID in the first single-face image.
+			# Face IDs are used for comparison to faces (their IDs) detected in other images.
+			for face in detected_faces:
+				emotions = face.face_attributes.emotion
+			print("Faces detected: " + faces_detected)
+	return emotions
+
+def uploadToStorage(image_name, frame):
+	container_client = storage_client.get_container_client("cameraimages")
+	try:
+		container_client.create_container()
+	except:
+		#Container already exists
+		print("Container already exists")
+	with open(image_name, 'rb') as image_file:
+		container_client.upload_blob(image_name, image_file.read(), overwrite=True)
+		#blob_client.upload_blob(image_file.read())
+
+def sendEvent(image_data):
 	batch = eventhub_client.create_batch(max_size_in_bytes=10000)
-	#data = EventData(content)
-	data = EventData(b"Hello There")
+	
+	data = EventData(image_data.encode())
 	try:
 		batch.add(data)
 	except ValueError:
@@ -28,6 +75,22 @@ def handleNewImage(image_name, frame):
 
 	eventhub_client.send_batch(batch)
 	print("Sent an event")
+	
+
+
+def handleNewImage(image_name, frame):
+	#Don't send the image to event hub
+	#Instead, push the image to storage and process the image with Cognitive Services
+	#Then push the json from the cognitive services call to event hub
+	#Then create a separate eventhub consumer client that processes each event
+	#And calculates the average sentiment of the people in the photo for the last 5 minutes
+	cv2.imwrite(image_name, frame)
+	emotions = analyseImage(image_name, frame)
+	if emotions:
+		d = datetime.datetime.now()
+		image_name = "face"+d
+		uploadToStorage(image_name, frame)
+		sendEvent(emotions+image_name)
  
 # construct the argument parser and parse the arguments
 ap = argparse.ArgumentParser()
@@ -97,6 +160,7 @@ while True:
 		cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 		text = "Occupied"
 		# Send the image to Blob Storage via event queue
+		#uploadToStorage("image.png", frame)
 		newImageEvent.newImage("image.png", frame)
 		
 
